@@ -5,6 +5,7 @@ Modern Dark Mode Interface with ANC, 10-Band EQ, Gaming Mode, and Battery Monito
 
 import os
 import sys
+import time
 import threading
 import customtkinter as ctk
 from PIL import Image
@@ -365,9 +366,17 @@ class SilencioApp(ctk.CTk):
     def _refresh_status(self):
         if self.controller.is_connected:
             self._log("Querying headphone status...")
-            self.controller.query_device_info()
+            threading.Thread(target=self._run_refresh, daemon=True).start()
         else:
             self._log("Headphone is not connected.")
+
+    def _run_refresh(self):
+        try:
+            self.controller.refresh_sync()
+            self._log(f"Status refreshed! Battery: {self.controller.battery}%, EQ: {self.controller.current_eq_name}")
+        except Exception as e:
+            print(f"[UI] Refresh error: {e}")
+            self._log("Refresh failed.")
 
     def _find_device(self):
         if self.controller.is_connected:
@@ -416,6 +425,8 @@ class SilencioApp(ctk.CTk):
         int_val = int(round(value))
         self.eq_labels[idx].configure(text=f"{int_val:+d}dB")
         self.var_eq_preset.set("Custom")
+        self.cbox_presets.set("Custom")
+        self.controller.mark_user_action()
 
     def _reset_eq(self):
         self.var_eq_preset.set("Default / Flat")
@@ -486,6 +497,7 @@ class SilencioApp(ctk.CTk):
             gains = value.get("gains", [0]*10)
             name = value.get("name", "Custom")
             self.var_eq_preset.set(name)
+            self.cbox_presets.set(name)
             for i in range(min(10, len(gains))):
                 self.eq_sliders[i].set(gains[i])
                 self.eq_labels[i].configure(text=f"{gains[i]:+d}dB")

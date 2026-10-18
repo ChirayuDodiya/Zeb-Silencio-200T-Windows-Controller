@@ -48,16 +48,11 @@ def main():
 
     ctrl = HeadphoneController(args.port)
     print(f"Connecting to ZEB-Silencio 200T...")
-    if not ctrl.connect():
+    if not ctrl.connect(sync=True):
         print("Failed to connect. Ensure headphone is on and connected to Windows via Bluetooth.")
         sys.exit(1)
 
-    time.sleep(0.5)
-
     if args.command == "status":
-        print("Querying device info...")
-        ctrl.query_device_info()
-        time.sleep(0.8)
         print(f"Device: {ctrl.device_name}")
         print(f"Battery: {ctrl.battery}% {'(Charging)' if ctrl.is_charging else ''}")
         anc_names = {0: "OFF", 1: "ON (Cancelling)", 2: "Transparency / Ambient"}

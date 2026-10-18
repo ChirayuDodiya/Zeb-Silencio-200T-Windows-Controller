@@ -1,1 +1,9 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Large / extracted APK assets
 apk_code/
+apk_file/

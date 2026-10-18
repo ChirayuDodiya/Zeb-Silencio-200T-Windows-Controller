@@ -84,19 +84,60 @@ ONE_DRAG_TWO_ON = 1
 # Standard 10-band EQ frequencies in Hz
 EQ_FREQUENCIES = [32, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 
-# Standard Presets
+# Official Presets matching APK (sa.c and EqSettingActivity)
 EQ_PRESETS: Dict[str, List[int]] = {
     "Default / Flat": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    "Pop": [2, 1, 0, -1, -2, -1, 0, 1, 2, 3],
-    "Rock": [4, 3, 2, 0, -1, 0, 2, 3, 4, 4],
-    "Jazz": [3, 2, 1, 2, -1, -1, 0, 1, 2, 3],
-    "Classical": [4, 3, 2, 2, -2, -2, 0, 2, 3, 3],
-    "Country": [2, 1, 0, 1, 2, 1, 0, 1, 2, 2],
-    "Hip Hop": [5, 4, 2, 1, -1, -1, 1, 2, 3, 4],
+    "Pop": [3, 1, 0, -2, -4, -4, -2, 0, 1, 2],
+    "Rock": [-2, 0, 2, 4, -2, -2, 0, 0, 4, 4],
+    "Classical": [0, 5, 5, 1, 0, 0, 0, 0, 2, 2],
+    "Jazz": [0, 0, 0, 4, 4, 4, 0, 2, 3, 4],
+    "Country": [-2, 0, 0, 2, 2, 0, 0, 0, 4, 4],
+    "Hip Hop": [4, 3, 2, -1, 0, 1, 2, 1, 0, -2],
     "Bass Boost": [6, 5, 4, 2, 1, 0, 0, 0, 0, 0],
     "Vocal": [-2, -2, -1, 1, 3, 4, 3, 1, 0, -1],
     "Treble Boost": [-1, 0, 0, 0, 1, 2, 3, 5, 6, 6]
 }
+
+# Bluetrum mode byte to preset name mapping
+MODE_TO_PRESET: Dict[int, str] = {
+    0: "Default / Flat",
+    1: "Pop",
+    2: "Rock",
+    3: "Classical",
+    4: "Jazz",
+    5: "Country",
+    6: "Hip Hop"
+}
+
+PRESET_TO_MODE: Dict[str, int] = {
+    "Default / Flat": 0,
+    "Pop": 1,
+    "Rock": 2,
+    "Classical": 3,
+    "Jazz": 4,
+    "Country": 5,
+    "Hip Hop": 6,
+    "Bass Boost": 32,
+    "Vocal": 32,
+    "Treble Boost": 32,
+    "Custom": 32
+}
+
+
+def identify_preset_name(mode: int, gains: List[int]) -> str:
+    """
+    Identifies the preset name given the mode byte and the 10 gain values.
+    """
+    # 1. Exact match against known preset gain curves
+    for preset_name, preset_gains in EQ_PRESETS.items():
+        if gains == preset_gains:
+            return preset_name
+            
+    # 2. Standard preset modes 0-6 if gains are close or default
+    if mode in MODE_TO_PRESET and mode < 32:
+        return MODE_TO_PRESET[mode]
+            
+    return "Custom"
 
 
 def build_packet(cmd: int, payload: bytes = b"", cmd_type: int = COMMAND_TYPE_REQUEST, seq: int = 0) -> bytes:
@@ -127,8 +168,9 @@ def build_packet(cmd: int, payload: bytes = b"", cmd_type: int = COMMAND_TYPE_RE
 
 def build_device_info_query() -> bytes:
     """
-    Creates a DeviceInfo query requesting all essential state TLVs:
-    Power, AncMode, WorkMode, EqSettings, WarningTone, OneDragTwo, BluetoothName, FwVersion
+    Creates a compact DeviceInfo query fitting inside Bluetrum 15-byte MTU:
+    Power (1), ANC Mode (12), Work Mode (8), EQ Setting (4), Warning Tone (28), OneDragTwo (25).
+    Payload length is 6 * 2 = 12 bytes.
     """
     tags_to_request = [
         INFO_DEVICE_POWER,
@@ -137,10 +179,6 @@ def build_device_info_query() -> bytes:
         INFO_EQ_SETTING,
         INFO_WARNING_TONE,
         INFO_ONE_DRAG_TWO,
-        INFO_BLUETOOTH_NAME,
-        INFO_FIRMWARE_VERSION,
-        INFO_ANC_GAIN,
-        INFO_TRANSPARENCY_GAIN,
     ]
     payload = bytearray()
     for tag in tags_to_request:
@@ -177,7 +215,10 @@ def build_eq_request(preset_id: int, gains: List[int], is_custom: bool = False) 
       Bytes 2..11: 10 gain values (signed bytes, -12 to +12 dB)
     """
     count = 10
-    mode_id = (preset_id + 32) if is_custom else preset_id
+    if is_custom and preset_id < 32:
+        mode_id = preset_id + 32
+    else:
+        mode_id = preset_id
     payload = bytearray([count, mode_id & 0xFF])
     for i in range(count):
         g = gains[i] if i < len(gains) else 0
@@ -191,21 +232,26 @@ def parse_packets_from_stream(buffer: bytearray) -> List[Tuple[int, int, bytes]]
     Parses complete frames from a byte buffer.
     Returns list of (cmd, cmd_type, payload).
     Modifies buffer in-place, removing parsed bytes.
+    Includes framing recovery for corrupted or misaligned stream data.
     """
     packets = []
     while len(buffer) >= 5:
-        # Check header
-        seq = buffer[0] & 0x0F
-        cmd = buffer[1]
         cmd_type = buffer[2]
-        frag_info = buffer[3]
         payload_len = buffer[4]
         
+        # Valid Bluetrum command types are 1 (Request), 2 (Response), 3 (Notify)
+        # Valid payload lengths for control messages are <= 250
+        if cmd_type not in (1, 2, 3) or payload_len > 250:
+            # Framing de-sync: discard the first misaligned byte and re-scan
+            del buffer[0]
+            continue
+            
         total_len = 5 + payload_len
         if len(buffer) < total_len:
-            # Need more data
+            # Need more data for this complete packet
             break
             
+        cmd = buffer[1]
         payload = bytes(buffer[5:total_len])
         del buffer[:total_len]
         packets.append((cmd, cmd_type, payload))
@@ -235,7 +281,10 @@ def parse_tlv_payload(payload: bytes) -> Dict[int, bytes]:
 def parse_battery_info(data: bytes) -> Dict[str, Any]:
     """
     Parses INFO_DEVICE_POWER TLV data.
-    Byte 0: Headphone / Left battery: (b & 0x7F) is level %, (b & 0x80) != 0 is charging.
+    Byte 0: Left earbud (TWS)
+    Byte 1: Right earbud / Headband main battery (Silencio 200T)
+    Byte 2: Charging case
+    For headband headphones (Silencio 200T), battery is reported in Byte 1 (right_battery).
     """
     res = {
         "battery": 0,
@@ -257,6 +306,10 @@ def parse_battery_info(data: bytes) -> Dict[str, Any]:
         b1 = data[1]
         res["right_battery"] = b1 & 0x7F
         res["right_charging"] = (b1 & 0x80) != 0
+        # For non-TWS / headband headphones, data[1] is the primary battery
+        if res["right_battery"] > 0 or res["left_battery"] == 0:
+            res["battery"] = res["right_battery"]
+            res["is_charging"] = res["right_charging"]
     if len(data) > 2:
         b2 = data[2]
         res["case_battery"] = b2 & 0x7F

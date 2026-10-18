@@ -106,9 +106,12 @@ class BluetoothConnection:
             self.serial = serial.Serial(
                 port=self.port,
                 baudrate=115200,
-                timeout=1.0,
+                timeout=0.1,
                 write_timeout=2.0
             )
+            # Essential for Windows Bluetooth Virtual Serial (SPP) driver to deliver incoming RX bytes
+            self.serial.dtr = True
+            self.serial.rts = True
             self.is_connected = True
             self._running = True
             self._rx_buffer.clear()
@@ -172,10 +175,11 @@ class BluetoothConnection:
             try:
                 data = self.serial.read(self.serial.in_waiting or 1)
                 if data:
+                    # print(f"[RAW RX]: {data.hex(' ')}")
                     self._rx_buffer.extend(data)
                     packets = parse_packets_from_stream(self._rx_buffer)
                     for cmd, cmd_type, payload in packets:
-                        # print(f"[RX] CMD={cmd} TYPE={cmd_type} LEN={len(payload)}: {payload.hex(' ')}")
+                        # print(f"[RX PKT] CMD={cmd} TYPE={cmd_type} LEN={len(payload)}: {payload.hex(' ')}")
                         if self.on_packet_received:
                             try:
                                 self.on_packet_received(cmd, cmd_type, payload)
