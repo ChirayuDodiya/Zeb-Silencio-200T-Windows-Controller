@@ -16,6 +16,26 @@ from app.connection import find_silencio_com_port, get_available_com_ports
 from app import protocol
 
 
+def get_resource_path(relative_path: str) -> str:
+    """Get absolute path to resource, works for dev and for PyInstaller onefile bundles."""
+    if hasattr(sys, '_MEIPASS'):
+        p = os.path.join(sys._MEIPASS, relative_path)
+        if os.path.exists(p):
+            return p
+        base_name = os.path.basename(relative_path)
+        p2 = os.path.join(sys._MEIPASS, "assets", base_name)
+        if os.path.exists(p2):
+            return p2
+    curr_dir = os.path.dirname(os.path.abspath(__file__))
+    p = os.path.join(curr_dir, relative_path)
+    if os.path.exists(p):
+        return p
+    p_parent = os.path.join(os.path.dirname(curr_dir), relative_path)
+    if os.path.exists(p_parent):
+        return p_parent
+    return p
+
+
 class SilencioApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -27,6 +47,14 @@ class SilencioApp(ctk.CTk):
         
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
+
+        # Set Window Icon
+        ico_path = get_resource_path(os.path.join("assets", "icon.ico"))
+        if os.path.exists(ico_path):
+            try:
+                self.iconbitmap(ico_path)
+            except Exception:
+                pass
 
         # Controller
         self.controller = HeadphoneController()
@@ -130,7 +158,7 @@ class SilencioApp(ctk.CTk):
         dev_card.pack(fill="x", pady=(0, 15))
 
         # Headphone Image
-        img_path = os.path.join(os.path.dirname(__file__), "assets", "headphone.png")
+        img_path = get_resource_path(os.path.join("assets", "headphone.png"))
         if os.path.exists(img_path):
             try:
                 pil_img = Image.open(img_path)
