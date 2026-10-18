@@ -391,7 +391,7 @@ Setting an EQ preset from the laptop updated the headphone DSP and was visible o
    - Mode 4: `Jazz`
    - Mode 5: `Country`
    - Mode 6: `Hip Hop`
-   - Mode 32+: `Bass Boost`, `Vocal`, `Treble Boost`, or `Custom`
+   - Mode 32+: `Bass Boost`, `Vocal`, `AirPods`, `OnePlus Buds 3`, or `Custom`
 2. **Continuous Background Polling Loop**:
    A dedicated background thread in `controller.py` sends `COMMAND_DEVICE_INFO` while connected. When the headphone replies with `INFO_EQ_SETTING` (tag 4), any changes made on the phone are detected.
 3. **User Action Debouncing**:

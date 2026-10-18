@@ -38,7 +38,7 @@ class SilencioApp(ctk.CTk):
         self.var_game_mode = ctk.BooleanVar(value=False)
         self.var_warning_tone = ctk.BooleanVar(value=True)
         self.var_one_drag_two = ctk.BooleanVar(value=False)
-        self.var_eq_preset = ctk.StringVar(value="Default / Flat")
+        self.var_eq_preset = ctk.StringVar(value="OnePlus Buds 3")
         self.eq_sliders: List[ctk.CTkSlider] = []
         self.eq_labels: List[ctk.CTkLabel] = []
 
@@ -282,12 +282,13 @@ class SilencioApp(ctk.CTk):
         sliders_frame.grid_columnconfigure(list(range(10)), weight=1)
 
         freq_labels = ["32Hz", "62Hz", "125Hz", "250Hz", "500Hz", "1kHz", "2kHz", "4kHz", "8kHz", "16kHz"]
+        init_gains = protocol.EQ_PRESETS.get("OnePlus Buds 3", [3, 4, 3, 2, 1, 0, -1, -3, -3, -2])
         for i in range(10):
             col_box = ctk.CTkFrame(sliders_frame, fg_color="transparent")
             col_box.grid(row=0, column=i, padx=3, pady=12, sticky="nsew")
 
             # Gain label on top
-            val_lbl = ctk.CTkLabel(col_box, text="0dB", font=ctk.CTkFont(size=11), text_color="#38bdf8")
+            val_lbl = ctk.CTkLabel(col_box, text=f"{init_gains[i]:+d}dB", font=ctk.CTkFont(size=11), text_color="#38bdf8")
             val_lbl.pack(pady=(0, 4))
             self.eq_labels.append(val_lbl)
 
@@ -301,7 +302,7 @@ class SilencioApp(ctk.CTk):
                 height=160,
                 command=lambda val, idx=i: self._on_slider_moved(idx, val)
             )
-            slider.set(0)
+            slider.set(init_gains[i])
             slider.pack(pady=4)
             self.eq_sliders.append(slider)
 
@@ -429,8 +430,8 @@ class SilencioApp(ctk.CTk):
         self.controller.mark_user_action()
 
     def _reset_eq(self):
-        self.var_eq_preset.set("Default / Flat")
-        self._on_eq_preset_selected("Default / Flat")
+        self.var_eq_preset.set("OnePlus Buds 3")
+        self._on_eq_preset_selected("OnePlus Buds 3")
 
     def _apply_current_eq(self):
         gains = [int(round(s.get())) for s in self.eq_sliders]

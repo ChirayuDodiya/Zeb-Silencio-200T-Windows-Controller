@@ -25,8 +25,8 @@ class HeadphoneController:
         self.work_mode = protocol.WORK_MODE_NORMAL # 0=NORMAL, 1=GAMING
         self.warning_tone = protocol.WARNING_TONE_ON # 0=OFF, 1=ON
         self.one_drag_two = protocol.ONE_DRAG_TWO_OFF # 0=OFF, 1=ON
-        self.current_eq_name = "Default / Flat"
-        self.eq_gains = [0] * 10
+        self.current_eq_name = "OnePlus Buds 3"
+        self.eq_gains = list(protocol.EQ_PRESETS.get("OnePlus Buds 3", [3, 4, 3, 2, 1, 0, -1, -3, -3, -2]))
         self.firmware_version = ""
         
         # Observer callbacks
@@ -116,9 +116,12 @@ class HeadphoneController:
         self.query_tag_sync(0xFF, timeout=0.4)
         # 2. Query core device states sequentially with synchronous waits
         self.query_tag_sync(protocol.INFO_DEVICE_POWER, timeout=0.35)
-        self.query_tag_sync(protocol.INFO_EQ_SETTING, timeout=0.35)
         self.query_tag_sync(protocol.INFO_ANC_MODE, timeout=0.35)
         self.query_tag_sync(protocol.INFO_WORK_MODE, timeout=0.35)
+        # 3. Automatically apply OnePlus Buds 3 preset to headphone on connect
+        if "OnePlus Buds 3" in protocol.EQ_PRESETS:
+            time.sleep(0.1)
+            self.set_eq_preset("OnePlus Buds 3")
 
     def query_device_info(self):
         """Sequentially queries core device tags using synchronous request-response."""

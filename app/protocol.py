@@ -84,8 +84,10 @@ ONE_DRAG_TWO_ON = 1
 # Standard 10-band EQ frequencies in Hz
 EQ_FREQUENCIES = [32, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 
-# Official Presets matching APK (sa.c and EqSettingActivity)
+# Presets matching requested sound profiles
 EQ_PRESETS: Dict[str, List[int]] = {
+    "AirPods": [2, 3, 2, 1, 0, 1, 0, -2, -3, -1],
+    "OnePlus Buds 3": [3, 4, 3, 2, 1, 0, -1, -3, -3, -2],
     "Default / Flat": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     "Pop": [3, 1, 0, -2, -4, -4, -2, 0, 1, 2],
     "Rock": [-2, 0, 2, 4, -2, -2, 0, 0, 4, 4],
@@ -94,8 +96,7 @@ EQ_PRESETS: Dict[str, List[int]] = {
     "Country": [-2, 0, 0, 2, 2, 0, 0, 0, 4, 4],
     "Hip Hop": [4, 3, 2, -1, 0, 1, 2, 1, 0, -2],
     "Bass Boost": [6, 5, 4, 2, 1, 0, 0, 0, 0, 0],
-    "Vocal": [-2, -2, -1, 1, 3, 4, 3, 1, 0, -1],
-    "Treble Boost": [-1, 0, 0, 0, 1, 2, 3, 5, 6, 6]
+    "Vocal": [-2, -2, -1, 1, 3, 4, 3, 1, 0, -1]
 }
 
 # Bluetrum mode byte to preset name mapping
@@ -110,6 +111,8 @@ MODE_TO_PRESET: Dict[int, str] = {
 }
 
 PRESET_TO_MODE: Dict[str, int] = {
+    "AirPods": 32,
+    "OnePlus Buds 3": 32,
     "Default / Flat": 0,
     "Pop": 1,
     "Rock": 2,
@@ -119,7 +122,6 @@ PRESET_TO_MODE: Dict[str, int] = {
     "Hip Hop": 6,
     "Bass Boost": 32,
     "Vocal": 32,
-    "Treble Boost": 32,
     "Custom": 32
 }
 
