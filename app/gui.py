@@ -11,9 +11,46 @@ import customtkinter as ctk
 from PIL import Image
 from typing import List, Optional
 
+try:
+    import pystray
+except ImportError:
+    pystray = None
+
 from app.controller import HeadphoneController
 from app.connection import find_silencio_com_port, get_available_com_ports
 from app import protocol
+
+
+def is_windows_startup_enabled() -> bool:
+    startup_dir = os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+    lnk_path = os.path.join(startup_dir, "ZEB-Silencio-200T.lnk")
+    return os.path.exists(lnk_path)
+
+
+def set_windows_startup(enabled: bool):
+    try:
+        startup_dir = os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+        lnk_path = os.path.join(startup_dir, "ZEB-Silencio-200T.lnk")
+        if enabled:
+            if getattr(sys, 'frozen', False):
+                target_exe = sys.executable
+            else:
+                target_exe = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ZEB-Silencio-200T.exe"))
+                if not os.path.exists(target_exe):
+                    target_exe = sys.executable
+            cwd = os.path.dirname(target_exe)
+            import win32com.client
+            wscript = win32com.client.Dispatch("WScript.Shell")
+            s = wscript.CreateShortcut(lnk_path)
+            s.TargetPath = target_exe
+            s.Arguments = "--minimized"
+            s.WorkingDirectory = cwd
+            s.Save()
+        else:
+            if os.path.exists(lnk_path):
+                os.remove(lnk_path)
+    except Exception as e:
+        print(f"[Startup] Error setting startup shortcut: {e}")
 
 
 def get_resource_path(relative_path: str) -> str:
@@ -39,6 +76,10 @@ def get_resource_path(relative_path: str) -> str:
 class SilencioApp(ctk.CTk):
     def __init__(self):
         super().__init__()
+
+        # Start minimized if requested via startup flag
+        if "--minimized" in sys.argv or "--background" in sys.argv:
+            self.withdraw()
 
         # Window Config
         self.title("ZEB-Silencio 200T - Windows Controller")
@@ -72,8 +113,19 @@ class SilencioApp(ctk.CTk):
 
         self._build_ui()
 
-        # Auto-connect in background on start
-        self.after(500, self._auto_connect_startup)
+        # Minimize to System Tray instead of quitting on 'X'
+        self.protocol("WM_DELETE_WINDOW", self._on_window_close)
+
+        # System Tray Icon
+        self.tray_icon = None
+        self._init_tray_icon()
+
+        # Ensure Windows startup is active so background auto-tuning works on boot
+        if not is_windows_startup_enabled():
+            set_windows_startup(True)
+
+        # Start auto-reconnect watcher in background on start
+        self.after(200, self._auto_connect_startup)
 
     def _build_ui(self):
         # Main Grid Layout (2 rows: Header, Body)
@@ -377,15 +429,18 @@ class SilencioApp(ctk.CTk):
     def _auto_connect_startup(self):
         auto_port = find_silencio_com_port() or "COM5"
         self.cbox_ports.set(auto_port)
-        self._log(f"Auto-detected port: {auto_port}. Attempting connection...")
-        threading.Thread(target=lambda: self.controller.connect(auto_port), daemon=True).start()
+        self._log(f"Auto-detecting ZEB-Silencio 200T on {auto_port}...")
+        self.controller.start_auto_reconnect(auto_port)
 
     def _toggle_connection(self):
         if self.controller.is_connected:
+            self.controller.stop_auto_reconnect()
             self.controller.disconnect()
+            self._log("Disconnected by user. (Click Connect to resume auto-connect)")
         else:
             port = self.cbox_ports.get()
             self._log(f"Connecting to {port}...")
+            self.controller.start_auto_reconnect(port)
             threading.Thread(target=lambda: self.controller.connect(port), daemon=True).start()
 
     def _on_port_selected(self, choice: str):
@@ -484,7 +539,21 @@ class SilencioApp(ctk.CTk):
                 fg_color="#064e3b"
             )
             self.btn_connect.configure(text="Disconnect", fg_color="#dc2626", hover_color="#b91c1c")
-            self._log(f"Connected: {message}")
+            self._log(f"Connected: {message} ● Automatically applied OnePlus Buds 3 EQ!")
+            self.var_eq_preset.set("OnePlus Buds 3")
+            self.cbox_presets.set("OnePlus Buds 3")
+            oneplus_gains = protocol.EQ_PRESETS.get("OnePlus Buds 3", [3, 4, 3, 2, 1, 0, -1, -3, -3, -2])
+            for i in range(10):
+                self.eq_sliders[i].set(oneplus_gains[i])
+                self.eq_labels[i].configure(text=f"{oneplus_gains[i]:+d}dB")
+            if self.tray_icon:
+                try:
+                    self.tray_icon.notify(
+                        "Connected to Bluetooth! Automatically applied OnePlus Buds 3 EQ.",
+                        "🎧 ZEB-Silencio 200T"
+                    )
+                except Exception:
+                    pass
         else:
             self.lbl_status_pill.configure(
                 text="● Disconnected", 
@@ -492,7 +561,7 @@ class SilencioApp(ctk.CTk):
                 fg_color="#27272a"
             )
             self.btn_connect.configure(text="Connect", fg_color="#2563eb", hover_color="#1d4ed8")
-            self._log(message)
+            self._log(f"{message} (Auto-connect active: waiting for Bluetooth link...)")
 
     def _apply_state_update(self, key: str, value):
         if key == "battery":
@@ -530,6 +599,68 @@ class SilencioApp(ctk.CTk):
             for i in range(min(10, len(gains))):
                 self.eq_sliders[i].set(gains[i])
                 self.eq_labels[i].configure(text=f"{gains[i]:+d}dB")
+
+    # System Tray Methods
+    def _init_tray_icon(self):
+        if not pystray:
+            return
+        try:
+            ico_path = get_resource_path(os.path.join("assets", "icon.ico"))
+            if not os.path.exists(ico_path):
+                img_path = get_resource_path(os.path.join("assets", "headphone.png"))
+                pil_img = Image.open(img_path) if os.path.exists(img_path) else Image.new("RGBA", (64, 64), (37, 99, 235, 255))
+            else:
+                pil_img = Image.open(ico_path)
+
+            menu = pystray.Menu(
+                pystray.MenuItem("🎧 Open Control Center", self._show_window_from_tray, default=True),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("⚡ Apply OnePlus Buds 3 Now", lambda icon, item: self._apply_preset_from_tray("OnePlus Buds 3")),
+                pystray.MenuItem("🍎 Apply AirPods Preset", lambda icon, item: self._apply_preset_from_tray("AirPods")),
+                pystray.MenuItem("🎵 Apply Flat / Default", lambda icon, item: self._apply_preset_from_tray("Default / Flat")),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem(
+                    "🚀 Start with Windows", 
+                    self._toggle_startup_from_tray, 
+                    checked=lambda item: is_windows_startup_enabled()
+                ),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("❌ Exit Completely", self._quit_app)
+            )
+
+            self.tray_icon = pystray.Icon("ZEB-Silencio-200T", pil_img, "ZEB-Silencio 200T Controller", menu)
+            self.tray_icon.run_detached()
+        except Exception as e:
+            print(f"[Tray] Error initializing tray icon: {e}")
+
+    def _show_window_from_tray(self, icon=None, item=None):
+        self.after(0, self._restore_window)
+
+    def _restore_window(self):
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def _on_window_close(self):
+        """Hides window to tray so background auto-EQ continues running."""
+        self.withdraw()
+
+    def _apply_preset_from_tray(self, preset_name: str):
+        self.after(0, lambda: self._on_eq_preset_selected(preset_name))
+
+    def _toggle_startup_from_tray(self, icon=None, item=None):
+        current = is_windows_startup_enabled()
+        set_windows_startup(not current)
+
+    def _quit_app(self, icon=None, item=None):
+        self.controller.stop_auto_reconnect()
+        self.controller.disconnect()
+        if self.tray_icon:
+            try:
+                self.tray_icon.stop()
+            except Exception:
+                pass
+        self.after(0, self.destroy)
 
 
 def main():

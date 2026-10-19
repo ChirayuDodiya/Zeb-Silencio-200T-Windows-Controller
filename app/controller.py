@@ -41,6 +41,11 @@ class HeadphoneController:
         self._stop_poll_event = threading.Event()
         self._poll_thread: Optional[threading.Thread] = None
 
+        # Auto-reconnection Watcher
+        self._auto_reconnect_stop = threading.Event()
+        self._auto_reconnect_thread: Optional[threading.Thread] = None
+        self._preferred_port: Optional[str] = port
+
     @property
     def is_connected(self) -> bool:
         return self.conn.is_connected
@@ -66,18 +71,54 @@ class HeadphoneController:
             return responded
 
     def connect(self, port: Optional[str] = None, sync: bool = False) -> bool:
+        """
+        Connects to the headphone via Bluetooth Serial Port (COM).
+        Executes connection flow and automatically applies OnePlus Buds 3 EQ.
+        """
+        if port:
+            self._preferred_port = port
         success = self.conn.connect(port)
         if success:
             if sync:
-                self._delayed_init_query()
+                self._run_connection_flow()
             else:
-                threading.Thread(target=self._delayed_init_query, daemon=True).start()
-            self._start_polling()
+                threading.Thread(target=self._run_connection_flow, daemon=True).start()
         return success
 
     def disconnect(self):
         self._stop_polling()
         self.conn.disconnect()
+
+    def start_auto_reconnect(self, port: Optional[str] = None):
+        """
+        Starts a background watcher that automatically detects when ZEB-Silencio 200T
+        connects to Windows via Bluetooth and establishes the communication link,
+        automatically applying the 'OnePlus Buds 3' EQ profile.
+        """
+        if port:
+            self._preferred_port = port
+        self._auto_reconnect_stop.clear()
+        if self._auto_reconnect_thread is None or not self._auto_reconnect_thread.is_alive():
+            self._auto_reconnect_thread = threading.Thread(target=self._auto_reconnect_loop, daemon=True)
+            self._auto_reconnect_thread.start()
+
+    def stop_auto_reconnect(self):
+        """Pauses the auto-reconnect watcher."""
+        self._auto_reconnect_stop.set()
+
+    def _auto_reconnect_loop(self):
+        while not self._auto_reconnect_stop.wait(2.0):
+            if self.is_connected:
+                continue
+            target_port = self._preferred_port or self.conn.port or find_silencio_com_port()
+            if not target_port:
+                continue
+            try:
+                success = self.connect(target_port, sync=False)
+                if success:
+                    print(f"[AutoReconnect] Connected to {target_port} and automatically applied OnePlus Buds 3 EQ!")
+            except Exception:
+                pass
 
     def _start_polling(self):
         self._stop_poll_event.clear()
@@ -98,7 +139,7 @@ class HeadphoneController:
             if not self.is_connected:
                 break
             # Skip poll query if user recently changed a setting from this laptop
-            if time.time() - self._last_user_action_time < 2.0:
+            if time.time() - self._last_user_action_time < 3.0:
                 continue
             try:
                 poll_count += 1
@@ -110,18 +151,33 @@ class HeadphoneController:
             except Exception as e:
                 print(f"[Controller] Polling error: {e}")
 
-    def _delayed_init_query(self):
-        time.sleep(0.3)
-        # 1. Send MTU Handshake required by Bluetrum chip
-        self.query_tag_sync(0xFF, timeout=0.4)
-        # 2. Query core device states sequentially with synchronous waits
-        self.query_tag_sync(protocol.INFO_DEVICE_POWER, timeout=0.35)
-        self.query_tag_sync(protocol.INFO_ANC_MODE, timeout=0.35)
-        self.query_tag_sync(protocol.INFO_WORK_MODE, timeout=0.35)
-        # 3. Automatically apply OnePlus Buds 3 preset to headphone on connect
-        if "OnePlus Buds 3" in protocol.EQ_PRESETS:
-            time.sleep(0.1)
-            self.set_eq_preset("OnePlus Buds 3")
+    def _run_connection_flow(self):
+        """
+        Executes Bluetooth connection initialization flow:
+        1. Waits 0.3s for UART communication to settle.
+        2. Sends Bluetrum MTU Handshake (Tag 0xFF).
+        3. Explicitly applies 'OnePlus Buds 3' EQ preset to headphone DSP hardware.
+        4. Queries device power, ANC mode, and work mode.
+        5. Starts background polling only after initial setup is fully completed.
+        """
+        try:
+            time.sleep(0.3)
+            # 1. Send MTU Handshake required by Bluetrum chip
+            self.query_tag_sync(0xFF, timeout=0.4)
+
+            # 2. Automatically apply OnePlus Buds 3 preset to headphone DSP hardware
+            if "OnePlus Buds 3" in protocol.EQ_PRESETS:
+                time.sleep(0.1)
+                self.set_eq_preset("OnePlus Buds 3")
+                time.sleep(0.15)
+
+            # 3. Query core device states sequentially with synchronous waits
+            self.query_tag_sync(protocol.INFO_DEVICE_POWER, timeout=0.35)
+            self.query_tag_sync(protocol.INFO_ANC_MODE, timeout=0.35)
+            self.query_tag_sync(protocol.INFO_WORK_MODE, timeout=0.35)
+        finally:
+            # 4. Start polling loop after init query and EQ flash are complete
+            self._start_polling()
 
     def query_device_info(self):
         """Sequentially queries core device tags using synchronous request-response."""
@@ -142,11 +198,12 @@ class HeadphoneController:
           1 = ANC ON
           2 = Transparency Mode
         """
-        self.mark_user_action()
-        self.anc_mode = mode
-        payload = protocol.build_anc_request(mode)
-        self.conn.send_command(protocol.COMMAND_ANC_MODE, payload)
-        self._notify_state("anc_mode", mode)
+        with self._query_lock:
+            self.mark_user_action()
+            self.anc_mode = mode
+            payload = protocol.build_anc_request(mode)
+            self.conn.send_command(protocol.COMMAND_ANC_MODE, payload)
+            self._notify_state("anc_mode", mode)
 
     def set_work_mode(self, mode: int):
         """
@@ -154,57 +211,65 @@ class HeadphoneController:
           0 = Normal (Music mode)
           1 = Gaming mode (Low latency)
         """
-        self.mark_user_action()
-        self.work_mode = mode
-        payload = protocol.build_work_mode_request(mode)
-        self.conn.send_command(protocol.COMMAND_WORK_MODE, payload)
-        self._notify_state("work_mode", mode)
+        with self._query_lock:
+            self.mark_user_action()
+            self.work_mode = mode
+            payload = protocol.build_work_mode_request(mode)
+            self.conn.send_command(protocol.COMMAND_WORK_MODE, payload)
+            self._notify_state("work_mode", mode)
 
     def set_warning_tone(self, enabled: bool):
         """Enable or disable voice prompt tones."""
-        self.mark_user_action()
-        val = protocol.WARNING_TONE_ON if enabled else protocol.WARNING_TONE_OFF
-        self.warning_tone = val
-        payload = protocol.build_warning_tone_request(val)
-        self.conn.send_command(protocol.COMMAND_WARNING_TONE, payload)
-        self._notify_state("warning_tone", val)
+        with self._query_lock:
+            self.mark_user_action()
+            val = protocol.WARNING_TONE_ON if enabled else protocol.WARNING_TONE_OFF
+            self.warning_tone = val
+            payload = protocol.build_warning_tone_request(val)
+            self.conn.send_command(protocol.COMMAND_WARNING_TONE, payload)
+            self._notify_state("warning_tone", val)
 
     def set_one_drag_two(self, enabled: bool):
         """Enable or disable dual device pairing (multipoint)."""
-        self.mark_user_action()
-        val = protocol.ONE_DRAG_TWO_ON if enabled else protocol.ONE_DRAG_TWO_OFF
-        self.one_drag_two = val
-        payload = protocol.build_one_drag_two_request(val)
-        self.conn.send_command(protocol.COMMAND_ONE_DRAG_TWO, payload)
-        self._notify_state("one_drag_two", val)
+        with self._query_lock:
+            self.mark_user_action()
+            val = protocol.ONE_DRAG_TWO_ON if enabled else protocol.ONE_DRAG_TWO_OFF
+            self.one_drag_two = val
+            payload = protocol.build_one_drag_two_request(val)
+            self.conn.send_command(protocol.COMMAND_ONE_DRAG_TWO, payload)
+            self._notify_state("one_drag_two", val)
 
     def set_eq_preset(self, preset_name: str):
         """Applies a built-in EQ preset."""
         if preset_name in protocol.EQ_PRESETS:
             gains = protocol.EQ_PRESETS[preset_name]
-            self.current_eq_name = preset_name
-            self.eq_gains = list(gains)
-            mode_id = protocol.PRESET_TO_MODE.get(preset_name, 0)
+            mode_id = protocol.PRESET_TO_MODE.get(preset_name, 32)
             is_custom = (mode_id >= 32)
             payload = protocol.build_eq_request(mode_id, gains, is_custom=is_custom)
-            self.mark_user_action()
-            self.conn.send_command(protocol.COMMAND_EQ, payload)
-            self._notify_state("eq", {"name": self.current_eq_name, "gains": self.eq_gains, "mode": mode_id})
+            with self._query_lock:
+                self.mark_user_action()
+                self._initial_eq_synced = True
+                self.current_eq_name = preset_name
+                self.eq_gains = list(gains)
+                self.conn.send_command(protocol.COMMAND_EQ, payload)
+                self._notify_state("eq", {"name": self.current_eq_name, "gains": self.eq_gains, "mode": mode_id})
 
     def set_custom_eq(self, gains: List[int]):
         """Applies custom 10-band EQ gains."""
-        self.eq_gains = list(gains)
-        preset_name = protocol.identify_preset_name(32, self.eq_gains)
-        self.current_eq_name = preset_name
+        preset_name = protocol.identify_preset_name(32, gains)
         payload = protocol.build_eq_request(32, gains, is_custom=True)
-        self.mark_user_action()
-        self.conn.send_command(protocol.COMMAND_EQ, payload)
-        self._notify_state("eq", {"name": self.current_eq_name, "gains": self.eq_gains, "mode": 32})
+        with self._query_lock:
+            self.mark_user_action()
+            self._initial_eq_synced = True
+            self.current_eq_name = preset_name
+            self.eq_gains = list(gains)
+            self.conn.send_command(protocol.COMMAND_EQ, payload)
+            self._notify_state("eq", {"name": self.current_eq_name, "gains": self.eq_gains, "mode": 32})
 
     def find_device(self):
         """Triggers find device ring/beep on headphones."""
-        payload = bytes([1]) # Ring start
-        self.conn.send_command(protocol.COMMAND_FIND_DEVICE, payload)
+        with self._query_lock:
+            payload = bytes([1]) # Ring start
+            self.conn.send_command(protocol.COMMAND_FIND_DEVICE, payload)
 
     def _update_eq_state(self, eq_data: Dict[str, Any]):
         """Updates internal EQ state and notifies observers if changed."""

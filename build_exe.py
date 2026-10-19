@@ -18,10 +18,15 @@ def build():
         f"--icon={icon_path}",
         f"--add-data={assets_data}",
         "--collect-all=customtkinter",
+        "--collect-all=pystray",
         "--hidden-import=serial",
         "--hidden-import=serial.tools.list_ports",
         "--hidden-import=PIL",
         "--hidden-import=PIL.Image",
+        "--hidden-import=pystray",
+        "--hidden-import=pystray._win32",
+        "--hidden-import=win32com",
+        "--hidden-import=win32com.client",
         "--clean",
         "run_app.py"
     ]

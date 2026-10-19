@@ -20,10 +20,26 @@ SPP_UUID = "{00001101-0000-1000-8000-00805F9B34FB}"
 
 def find_silencio_com_port() -> Optional[str]:
     """
-    Scans Windows PnP device list for a Serial Port linked to ZEB-Silencio 200T or its MAC address.
+    Scans Windows serial ports for ZEB-Silencio 200T or its MAC address (41:42:F3:8D:54:52).
     """
+    # 1. Fast in-process check via pyserial (<10ms)
     try:
-        # Run PowerShell command to find Bluetooth Serial ports
+        clean_mac = TARGET_MAC.replace(":", "").replace("-", "").upper()
+        ports = serial.tools.list_ports.comports()
+        for p in ports:
+            hwid = (p.hwid or "").upper()
+            desc = (p.description or "").lower()
+            if clean_mac in hwid:
+                return p.device
+            if "bluetooth" in desc:
+                for pattern in TARGET_NAME_PATTERNS:
+                    if pattern in desc:
+                        return p.device
+    except Exception as e:
+        print(f"[Discovery] Fast scan error: {e}")
+
+    # 2. Comprehensive Windows PnP PowerShell query (fallback)
+    try:
         cmd = [
             "powershell", "-NoProfile", "-Command",
             'Get-PnpDevice -Class Ports | Select-Object FriendlyName, InstanceId | ConvertTo-Csv -NoTypeInformation'
@@ -37,15 +53,12 @@ def find_silencio_com_port() -> Optional[str]:
                     friendly_name = parts[0]
                     instance_id = parts[1].upper()
                     
-                    # Check if instance_id contains the MAC address 4142F38D5452
                     clean_mac = TARGET_MAC.replace(":", "").replace("-", "")
                     if clean_mac in instance_id:
-                        # Extract COM port from FriendlyName, e.g. "Standard Serial over Bluetooth link (COM5)"
                         m = re.search(r'\((COM\d+)\)', friendly_name)
                         if m:
                             return m.group(1)
                             
-                    # Alternatively check if instance_id has the SPP GUID
                     if SPP_UUID.upper() in instance_id:
                         for pattern in TARGET_NAME_PATTERNS:
                             if pattern in friendly_name.lower():
@@ -53,20 +66,7 @@ def find_silencio_com_port() -> Optional[str]:
                                 if m:
                                     return m.group(1)
     except Exception as e:
-        print(f"[Discovery] Error querying PnP devices: {e}")
-        
-    # Fallback: scan available serial ports via pyserial
-    ports = serial.tools.list_ports.comports()
-    for p in ports:
-        desc = (p.description or "").lower()
-        hwid = (p.hwid or "").upper()
-        clean_mac = TARGET_MAC.replace(":", "").replace("-", "")
-        if clean_mac in hwid:
-            return p.device
-        if "bluetooth" in desc:
-            for pattern in TARGET_NAME_PATTERNS:
-                if pattern in desc:
-                    return p.device
+        print(f"[Discovery] PnP scan error: {e}")
                     
     return None
 
