@@ -14,7 +14,6 @@ from typing import Dict, Any, List, Optional
 
 CONFIG_DIR_NAME = "ZEB-Silencio-200T"
 CONFIG_FILE_NAME = "config.json"
-DEFAULT_MAC = "41:42:F3:8D:54:52"
 
 
 def get_config_dir() -> str:

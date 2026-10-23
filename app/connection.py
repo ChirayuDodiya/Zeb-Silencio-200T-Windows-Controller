@@ -21,61 +21,68 @@ SPP_UUID = "{00001101-0000-1000-8000-00805F9B34FB}"
 def find_silencio_com_port(target_mac: Optional[str] = None) -> Optional[str]:
     """
     Scans Windows serial ports for ZEB-Silencio 200T or its configured MAC address.
+    Auto-discovers newly paired headphones of the same model if MAC changed.
     """
+    def _search(clean_mac: str) -> Optional[str]:
+        # 1. Fast in-process check via pyserial (<10ms)
+        try:
+            for p in serial.tools.list_ports.comports():
+                hwid = (p.hwid or "").upper()
+                desc = (p.description or "").lower()
+                if clean_mac and clean_mac in hwid:
+                    return p.device
+                if "bluetooth" in desc:
+                    for pattern in TARGET_NAME_PATTERNS:
+                        if pattern in desc:
+                            return p.device
+        except Exception as e:
+            print(f"[Discovery] Fast scan error: {e}")
+
+        # 2. Comprehensive Windows PnP PowerShell query (fallback)
+        try:
+            cmd = [
+                "powershell", "-NoProfile", "-Command",
+                'Get-PnpDevice -Class Ports | Select-Object FriendlyName, InstanceId | ConvertTo-Csv -NoTypeInformation'
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            if res.returncode == 0:
+                lines = res.stdout.strip().splitlines()
+                for line in lines[1:]: # Skip header
+                    parts = [p.strip('"\r ') for p in line.split('","')]
+                    if len(parts) >= 2:
+                        friendly_name = parts[0]
+                        instance_id = parts[1].upper()
+                        if clean_mac and clean_mac in instance_id:
+                            m = re.search(r'\((COM\d+)\)', friendly_name)
+                            if m:
+                                return m.group(1)
+                        if SPP_UUID.upper() in instance_id:
+                            for pattern in TARGET_NAME_PATTERNS:
+                                if pattern in friendly_name.lower():
+                                    m = re.search(r'\((COM\d+)\)', friendly_name)
+                                    if m:
+                                        return m.group(1)
+        except Exception as e:
+            print(f"[Discovery] PnP scan error: {e}")
+        return None
+
+    # Try current or requested MAC first
     mac = target_mac or config.get_mac_address()
     clean_mac = config.clean_mac(mac)
-    if not clean_mac:
-        for d in config.discover_paired_bluetooth_devices():
-            if d.get("is_target"):
-                mac = d["mac"]
-                config.set_mac_address(mac)
-                clean_mac = config.clean_mac(mac)
-                break
+    if clean_mac:
+        found_port = _search(clean_mac)
+        if found_port:
+            return found_port
 
-    # 1. Fast in-process check via pyserial (<10ms)
-    try:
-        ports = serial.tools.list_ports.comports()
-        for p in ports:
-            hwid = (p.hwid or "").upper()
-            desc = (p.description or "").lower()
-            if clean_mac and clean_mac in hwid:
-                return p.device
-            if "bluetooth" in desc:
-                for pattern in TARGET_NAME_PATTERNS:
-                    if pattern in desc:
-                        return p.device
-    except Exception as e:
-        print(f"[Discovery] Fast scan error: {e}")
+    # If not found (or no MAC configured), auto-discover paired devices for any ZEB-Silencio 200T
+    for d in config.discover_paired_bluetooth_devices():
+        if d.get("is_target"):
+            cand_mac = d.get("clean_mac", "")
+            found_port = _search(cand_mac)
+            if found_port:
+                config.set_mac_address(d["mac"])
+                return found_port
 
-    # 2. Comprehensive Windows PnP PowerShell query (fallback)
-    try:
-        cmd = [
-            "powershell", "-NoProfile", "-Command",
-            'Get-PnpDevice -Class Ports | Select-Object FriendlyName, InstanceId | ConvertTo-Csv -NoTypeInformation'
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-        if res.returncode == 0:
-            lines = res.stdout.strip().splitlines()
-            for line in lines[1:]: # Skip header
-                parts = [p.strip('"\r ') for p in line.split('","')]
-                if len(parts) >= 2:
-                    friendly_name = parts[0]
-                    instance_id = parts[1].upper()
-                    
-                    if clean_mac and clean_mac in instance_id:
-                        m = re.search(r'\((COM\d+)\)', friendly_name)
-                        if m:
-                            return m.group(1)
-                            
-                    if SPP_UUID.upper() in instance_id:
-                        for pattern in TARGET_NAME_PATTERNS:
-                            if pattern in friendly_name.lower():
-                                m = re.search(r'\((COM\d+)\)', friendly_name)
-                                if m:
-                                    return m.group(1)
-    except Exception as e:
-        print(f"[Discovery] PnP scan error: {e}")
-                    
     return None
 
 
