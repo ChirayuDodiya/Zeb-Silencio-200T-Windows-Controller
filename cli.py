@@ -38,15 +38,18 @@ def main():
     eq_p = subparsers.add_parser("eq", help="Apply EQ preset")
     eq_p.add_argument("preset", choices=[k.lower().replace(" ", "").replace("/", "") for k in protocol.EQ_PRESETS.keys()], help="Preset name")
 
-    # Port option
+    # Port and MAC options
     parser.add_argument("--port", help="Specify serial port (default: auto-detected, e.g. COM5)", default=None)
+    parser.add_argument("--mac", help="Specify Bluetooth MAC address (default: from config)", default=None)
 
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
         sys.exit(0)
 
-    ctrl = HeadphoneController(args.port)
+    from app import config
+    target_mac = args.mac or config.get_mac_address()
+    ctrl = HeadphoneController(args.port, mac=target_mac)
     print(f"Connecting to ZEB-Silencio 200T...")
     if not ctrl.connect(sync=True):
         print("Failed to connect. Ensure headphone is on and connected to Windows via Bluetooth.")

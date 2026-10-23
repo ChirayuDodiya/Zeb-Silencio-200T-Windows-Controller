@@ -126,7 +126,7 @@ PRESET_TO_MODE: Dict[str, int] = {
 }
 
 
-def identify_preset_name(mode: int, gains: List[int]) -> str:
+def identify_preset_name(mode: int, gains: List[int], custom_presets: Optional[Dict[str, List[int]]] = None) -> str:
     """
     Identifies the preset name given the mode byte and the 10 gain values.
     """
@@ -134,12 +134,18 @@ def identify_preset_name(mode: int, gains: List[int]) -> str:
     for preset_name, preset_gains in EQ_PRESETS.items():
         if gains == preset_gains:
             return preset_name
+
+    # 1b. Exact match against user custom presets
+    if custom_presets:
+        for preset_name, preset_gains in custom_presets.items():
+            if gains == preset_gains:
+                return preset_name
             
     # 2. Standard preset modes 0-6 if gains are close or default
     if mode in MODE_TO_PRESET and mode < 32:
         return MODE_TO_PRESET[mode]
             
-    return "Custom"
+    return "Custom" 
 
 
 def build_packet(cmd: int, payload: bytes = b"", cmd_type: int = COMMAND_TYPE_REQUEST, seq: int = 0) -> bytes:

@@ -9,10 +9,12 @@ import threading
 from typing import Dict, List, Any, Optional, Callable
 from app.connection import BluetoothConnection, find_silencio_com_port, get_available_com_ports
 from app import protocol
+from app import config
 
 
 class HeadphoneController:
-    def __init__(self, port: Optional[str] = None):
+    def __init__(self, port: Optional[str] = None, mac: Optional[str] = None):
+        self.target_mac = mac
         self.conn = BluetoothConnection(port)
         self.conn.on_packet_received = self._handle_packet
         self.conn.on_connection_change = self._handle_connection_change
@@ -25,8 +27,12 @@ class HeadphoneController:
         self.work_mode = protocol.WORK_MODE_NORMAL # 0=NORMAL, 1=GAMING
         self.warning_tone = protocol.WARNING_TONE_ON # 0=OFF, 1=ON
         self.one_drag_two = protocol.ONE_DRAG_TWO_OFF # 0=OFF, 1=ON
-        self.current_eq_name = "OnePlus Buds 3"
-        self.eq_gains = list(protocol.EQ_PRESETS.get("OnePlus Buds 3", [3, 4, 3, 2, 1, 0, -1, -3, -3, -2]))
+        def_preset = config.get_default_preset()
+        self.current_eq_name = def_preset
+        if def_preset == "Custom":
+            self.eq_gains = list(config.get_custom_eq())
+        else:
+            self.eq_gains = list(protocol.EQ_PRESETS.get(def_preset, protocol.EQ_PRESETS.get("OnePlus Buds 3", [0] * 10)))
         self.firmware_version = ""
         
         # Observer callbacks
@@ -77,7 +83,7 @@ class HeadphoneController:
         """
         if port:
             self._preferred_port = port
-        success = self.conn.connect(port)
+        success = self.conn.connect(port, target_mac=self.target_mac)
         if success:
             if sync:
                 self._run_connection_flow()
@@ -110,7 +116,7 @@ class HeadphoneController:
         while not self._auto_reconnect_stop.wait(2.0):
             if self.is_connected:
                 continue
-            target_port = self._preferred_port or self.conn.port or find_silencio_com_port()
+            target_port = self._preferred_port or self.conn.port or find_silencio_com_port(self.target_mac)
             if not target_port:
                 continue
             try:
@@ -165,11 +171,16 @@ class HeadphoneController:
             # 1. Send MTU Handshake required by Bluetrum chip
             self.query_tag_sync(0xFF, timeout=0.4)
 
-            # 2. Automatically apply OnePlus Buds 3 preset to headphone DSP hardware
-            if "OnePlus Buds 3" in protocol.EQ_PRESETS:
-                time.sleep(0.1)
+            # 2. Automatically apply default EQ preset to headphone DSP hardware
+            default_preset = config.get_default_preset()
+            time.sleep(0.1)
+            if default_preset in protocol.EQ_PRESETS or default_preset in config.get_custom_presets():
+                self.set_eq_preset(default_preset)
+            elif default_preset == "Custom":
+                self.set_custom_eq(config.get_custom_eq())
+            else:
                 self.set_eq_preset("OnePlus Buds 3")
-                time.sleep(0.15)
+            time.sleep(0.15)
 
             # 3. Query core device states sequentially with synchronous waits
             self.query_tag_sync(protocol.INFO_DEVICE_POWER, timeout=0.35)
@@ -239,7 +250,8 @@ class HeadphoneController:
             self._notify_state("one_drag_two", val)
 
     def set_eq_preset(self, preset_name: str):
-        """Applies a built-in EQ preset."""
+        """Applies a built-in or user custom EQ preset."""
+        custom_presets = config.get_custom_presets()
         if preset_name in protocol.EQ_PRESETS:
             gains = protocol.EQ_PRESETS[preset_name]
             mode_id = protocol.PRESET_TO_MODE.get(preset_name, 32)
@@ -252,10 +264,21 @@ class HeadphoneController:
                 self.eq_gains = list(gains)
                 self.conn.send_command(protocol.COMMAND_EQ, payload)
                 self._notify_state("eq", {"name": self.current_eq_name, "gains": self.eq_gains, "mode": mode_id})
+        elif preset_name in custom_presets:
+            gains = custom_presets[preset_name]
+            payload = protocol.build_eq_request(32, gains, is_custom=True)
+            with self._query_lock:
+                self.mark_user_action()
+                self._initial_eq_synced = True
+                self.current_eq_name = preset_name
+                self.eq_gains = list(gains)
+                self.conn.send_command(protocol.COMMAND_EQ, payload)
+                self._notify_state("eq", {"name": self.current_eq_name, "gains": self.eq_gains, "mode": 32})
 
-    def set_custom_eq(self, gains: List[int]):
+    def set_custom_eq(self, gains: List[int], name: Optional[str] = None):
         """Applies custom 10-band EQ gains."""
-        preset_name = protocol.identify_preset_name(32, gains)
+        custom_presets = config.get_custom_presets()
+        preset_name = name or protocol.identify_preset_name(32, gains, custom_presets=custom_presets)
         payload = protocol.build_eq_request(32, gains, is_custom=True)
         with self._query_lock:
             self.mark_user_action()
@@ -275,7 +298,13 @@ class HeadphoneController:
         """Updates internal EQ state and notifies observers if changed."""
         mode = eq_data.get("mode", 0)
         gains = eq_data.get("gains", [0] * 10)
-        preset_name = protocol.identify_preset_name(mode, gains)
+
+        # Preserve currently active preset name if gains still match
+        if getattr(self, "_initial_eq_synced", False) and self.eq_gains == gains and self.current_eq_name:
+            preset_name = self.current_eq_name
+        else:
+            custom_presets = config.get_custom_presets()
+            preset_name = protocol.identify_preset_name(mode, gains, custom_presets=custom_presets)
 
         changed = (not getattr(self, "_initial_eq_synced", False) or 
                    self.current_eq_name != preset_name or 

@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from app.controller import HeadphoneController
 from app.connection import find_silencio_com_port
 from app import protocol
+from app import config
 
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "background_service.log")
 
@@ -47,11 +48,13 @@ def notify_user(title: str, message: str):
 def main():
     log("==================================================")
     log("ZEB-Silencio 200T Background Auto-Tuning Service Started.")
-    log("Target Preset: OnePlus Buds 3 (+3, +4, +3, +2, +1, 0, -1, -3, -3, -2 dB)")
+    def_preset = config.get_default_preset()
+    log(f"Target Default Preset: {def_preset}")
     log("Waiting for headphones to connect via Bluetooth...")
     log("==================================================")
 
-    ctrl = HeadphoneController()
+    target_mac = config.get_mac_address()
+    ctrl = HeadphoneController(mac=target_mac)
     running = True
 
     def sig_handler(sig, frame):
@@ -69,12 +72,15 @@ def main():
 
     while running:
         try:
-            port = find_silencio_com_port() or "COM5"
+            target_mac = config.get_mac_address()
+            ctrl.target_mac = target_mac
+            port = find_silencio_com_port(target_mac) or "COM5"
             if not ctrl.is_connected:
                 success = ctrl.connect(port, sync=True)
                 if success:
-                    log(f"Headphones connected on {port}! Automatically applied 'OnePlus Buds 3' EQ.")
-                    notify_user("🎧 ZEB-Silencio 200T", "Connected! Automatically set EQ to OnePlus Buds 3.")
+                    def_preset = config.get_default_preset()
+                    log(f"Headphones connected on {port}! Automatically applied '{def_preset}' EQ.")
+                    notify_user("ZEB-Silencio 200T", f"Connected! Automatically set EQ to {def_preset}.")
                     was_connected = True
             else:
                 if not was_connected:

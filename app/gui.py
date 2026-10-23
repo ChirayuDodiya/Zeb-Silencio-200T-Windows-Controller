@@ -19,13 +19,12 @@ except ImportError:
 from app.controller import HeadphoneController
 from app.connection import find_silencio_com_port, get_available_com_ports
 from app import protocol
-
+from app import config
 
 def is_windows_startup_enabled() -> bool:
     startup_dir = os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
     lnk_path = os.path.join(startup_dir, "ZEB-Silencio-200T.lnk")
     return os.path.exists(lnk_path)
-
 
 def set_windows_startup(enabled: bool):
     try:
@@ -52,7 +51,6 @@ def set_windows_startup(enabled: bool):
     except Exception as e:
         print(f"[Startup] Error setting startup shortcut: {e}")
 
-
 def get_resource_path(relative_path: str) -> str:
     """Get absolute path to resource, works for dev and for PyInstaller onefile bundles."""
     if hasattr(sys, '_MEIPASS'):
@@ -71,6 +69,38 @@ def get_resource_path(relative_path: str) -> str:
     if os.path.exists(p_parent):
         return p_parent
     return p
+
+class ConfirmDialog(ctk.CTkToplevel):
+    def __init__(self, parent, title: str, message: str, on_confirm, confirm_text: str = "Confirm"):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("380x160")
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+        self.configure(fg_color="#0f172a")
+        self.transient(parent)
+        self.grab_set()
+
+        try:
+            x = parent.winfo_x() + (parent.winfo_width() // 2) - 190
+            y = parent.winfo_y() + (parent.winfo_height() // 2) - 80
+            self.geometry(f"380x160+{max(0, x)}+{max(0, y)}")
+        except Exception:
+            pass
+
+        ctk.CTkLabel(self, text=title, font=ctk.CTkFont(size=15, weight="bold"), text_color="#f8fafc").pack(pady=(18, 6))
+        ctk.CTkLabel(self, text=message, font=ctk.CTkFont(size=12), text_color="#94a3b8", wraplength=340).pack(pady=(0, 16))
+
+        btn_box = ctk.CTkFrame(self, fg_color="transparent")
+        btn_box.pack(fill="x", padx=25)
+
+        ctk.CTkButton(btn_box, text="Cancel", width=90, fg_color="#334155", hover_color="#475569", command=self.destroy).pack(side="left")
+        
+        def confirm_and_close():
+            self.destroy()
+            on_confirm()
+
+        ctk.CTkButton(btn_box, text=confirm_text, width=100, fg_color="#dc2626", hover_color="#b91c1c", command=confirm_and_close).pack(side="right")
 
 
 class SilencioApp(ctk.CTk):
@@ -98,7 +128,7 @@ class SilencioApp(ctk.CTk):
                 pass
 
         # Controller
-        self.controller = HeadphoneController()
+        self.controller = HeadphoneController(mac=config.get_mac_address())
         self.controller.on_state_update = self._on_state_update_threadsafe
         self.controller.on_connection_update = self._on_connection_update_threadsafe
 
@@ -107,9 +137,10 @@ class SilencioApp(ctk.CTk):
         self.var_game_mode = ctk.BooleanVar(value=False)
         self.var_warning_tone = ctk.BooleanVar(value=True)
         self.var_one_drag_two = ctk.BooleanVar(value=False)
-        self.var_eq_preset = ctk.StringVar(value="OnePlus Buds 3")
+        self.var_eq_preset = ctk.StringVar(value=config.get_default_preset())
         self.eq_sliders: List[ctk.CTkSlider] = []
         self.eq_labels: List[ctk.CTkLabel] = []
+        self.preset_buttons: Dict[str, ctk.CTkButton] = {}
 
         self._build_ui()
 
@@ -143,7 +174,7 @@ class SilencioApp(ctk.CTk):
         
         title_lbl = ctk.CTkLabel(
             title_box, 
-            text="🎧 ZEB-Silencio 200T", 
+            text="ZEB-Silencio 200T", 
             font=ctk.CTkFont(size=20, weight="bold")
         )
         title_lbl.pack(side="left")
@@ -256,7 +287,7 @@ class SilencioApp(ctk.CTk):
 
         btn_refresh = ctk.CTkButton(
             btn_action_box,
-            text="🔄 Refresh",
+            text="Refresh",
             width=100,
             command=self._refresh_status,
             fg_color="#334155",
@@ -266,7 +297,7 @@ class SilencioApp(ctk.CTk):
 
         btn_find = ctk.CTkButton(
             btn_action_box,
-            text="🔔 Find Device",
+            text="Find Device",
             width=100,
             command=self._find_device,
             fg_color="#334155",
@@ -287,21 +318,21 @@ class SilencioApp(ctk.CTk):
         # Switch 1: Gaming Mode
         f1 = ctk.CTkFrame(features_card, fg_color="transparent")
         f1.pack(fill="x", padx=15, pady=6)
-        ctk.CTkLabel(f1, text="⚡ Low Latency Gaming Mode", font=ctk.CTkFont(size=13)).pack(side="left")
+        ctk.CTkLabel(f1, text="Low Latency Gaming Mode", font=ctk.CTkFont(size=13)).pack(side="left")
         self.sw_game = ctk.CTkSwitch(f1, text="", variable=self.var_game_mode, command=self._on_game_mode_toggle)
         self.sw_game.pack(side="right")
 
         # Switch 2: Voice Prompt
         f2 = ctk.CTkFrame(features_card, fg_color="transparent")
         f2.pack(fill="x", padx=15, pady=6)
-        ctk.CTkLabel(f2, text="📢 Voice Prompt / Tone", font=ctk.CTkFont(size=13)).pack(side="left")
+        ctk.CTkLabel(f2, text="Voice Prompt / Tone", font=ctk.CTkFont(size=13)).pack(side="left")
         self.sw_tone = ctk.CTkSwitch(f2, text="", variable=self.var_warning_tone, command=self._on_warning_tone_toggle)
         self.sw_tone.pack(side="right")
 
         # Switch 3: Dual Connection
         f3 = ctk.CTkFrame(features_card, fg_color="transparent")
         f3.pack(fill="x", padx=15, pady=(6, 15))
-        ctk.CTkLabel(f3, text="🔗 Dual Device Multipoint", font=ctk.CTkFont(size=13)).pack(side="left")
+        ctk.CTkLabel(f3, text="Dual Device Multipoint", font=ctk.CTkFont(size=13)).pack(side="left")
         self.sw_dual = ctk.CTkSwitch(f3, text="", variable=self.var_one_drag_two, command=self._on_one_drag_two_toggle)
         self.sw_dual.pack(side="right")
 
@@ -333,28 +364,35 @@ class SilencioApp(ctk.CTk):
         eq_card.pack(fill="x", pady=0)
 
         eq_hdr = ctk.CTkFrame(eq_card, fg_color="transparent")
-        eq_hdr.pack(fill="x", padx=18, pady=(15, 12))
+        eq_hdr.pack(fill="x", padx=18, pady=(15, 8))
         ctk.CTkLabel(eq_hdr, text="10-Band Equalizer", font=ctk.CTkFont(size=16, weight="bold")).pack(side="left")
 
-        # Preset Dropdown
-        self.cbox_presets = ctk.CTkComboBox(
+        self.lbl_default_indicator = ctk.CTkLabel(
             eq_hdr,
-            values=list(protocol.EQ_PRESETS.keys()) + ["Custom"],
-            variable=self.var_eq_preset,
-            command=self._on_eq_preset_selected,
-            width=150
+            text=f"(Default: {config.get_default_preset()})",
+            font=ctk.CTkFont(size=11),
+            text_color="#38bdf8"
         )
-        self.cbox_presets.pack(side="right", padx=(10, 0))
+        self.lbl_default_indicator.pack(side="left", padx=8)
 
-        btn_reset_eq = ctk.CTkButton(
+        self.btn_delete_preset = ctk.CTkButton(
             eq_hdr,
-            text="Reset",
-            width=65,
-            command=self._reset_eq,
-            fg_color="#334155",
-            hover_color="#475569"
+            text="Delete Preset",
+            width=100,
+            height=28,
+            command=self._delete_current_preset_prompt,
+            fg_color="#27272a",
+            hover_color="#3f3f46",
+            text_color="#71717a",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            state="disabled"
         )
-        btn_reset_eq.pack(side="right")
+        self.btn_delete_preset.pack(side="right")
+
+        # Preset Buttons Grid (Android App Style)
+        self.preset_frame = ctk.CTkFrame(eq_card, fg_color="transparent")
+        self.preset_frame.pack(fill="x", padx=18, pady=(0, 10))
+        self._build_preset_buttons()
 
         # 10 Sliders Container
         sliders_frame = ctk.CTkFrame(eq_card, fg_color="#0f172a", corner_radius=10)
@@ -362,7 +400,11 @@ class SilencioApp(ctk.CTk):
         sliders_frame.grid_columnconfigure(list(range(10)), weight=1)
 
         freq_labels = ["32Hz", "62Hz", "125Hz", "250Hz", "500Hz", "1kHz", "2kHz", "4kHz", "8kHz", "16kHz"]
-        init_gains = protocol.EQ_PRESETS.get("OnePlus Buds 3", [3, 4, 3, 2, 1, 0, -1, -3, -3, -2])
+        default_preset = config.get_default_preset()
+        if default_preset == "Custom":
+            init_gains = config.get_custom_eq()
+        else:
+            init_gains = protocol.EQ_PRESETS.get(default_preset, [0] * 10)
         for i in range(10):
             col_box = ctk.CTkFrame(sliders_frame, fg_color="transparent")
             col_box.grid(row=0, column=i, padx=3, pady=12, sticky="nsew")
@@ -390,17 +432,44 @@ class SilencioApp(ctk.CTk):
             f_lbl = ctk.CTkLabel(col_box, text=freq_labels[i], font=ctk.CTkFont(size=11), text_color="#94a3b8")
             f_lbl.pack(pady=(4, 0))
 
-        # Apply EQ Button
-        btn_apply_eq = ctk.CTkButton(
-            eq_card,
-            text="Save & Apply EQ to Headphone",
+        # Equalizer Action Buttons
+        eq_actions = ctk.CTkFrame(eq_card, fg_color="transparent")
+        eq_actions.pack(fill="x", padx=18, pady=(0, 18))
+
+        self.btn_set_default = ctk.CTkButton(
+            eq_actions,
+            text="Set as Default on Connect",
+            width=180,
             height=36,
-            command=self._apply_current_eq,
+            command=self._set_current_as_default,
+            fg_color="#334155",
+            hover_color="#475569",
+            font=ctk.CTkFont(size=12, weight="bold")
+        )
+        self.btn_set_default.pack(side="left", padx=(0, 10))
+
+        self.btn_save_preset = ctk.CTkButton(
+            eq_actions,
+            text="+ Save as Preset",
+            width=140,
+            height=36,
+            command=self._save_preset_prompt,
             fg_color="#2563eb",
             hover_color="#1d4ed8",
-            font=ctk.CTkFont(size=13, weight="bold")
+            font=ctk.CTkFont(size=12, weight="bold")
         )
-        btn_apply_eq.pack(fill="x", padx=18, pady=(0, 18))
+        self.btn_save_preset.pack(side="left", padx=(0, 10))
+
+        btn_apply_eq = ctk.CTkButton(
+            eq_actions,
+            text="Apply to Headphone",
+            height=36,
+            command=self._apply_current_eq,
+            fg_color="#0284c7",
+            hover_color="#0369a1",
+            font=ctk.CTkFont(size=12, weight="bold")
+        )
+        btn_apply_eq.pack(side="left", fill="x", expand=True)
 
         # 3. Status Bar (Bottom)
         self.lbl_log = ctk.CTkLabel(
@@ -496,30 +565,132 @@ class SilencioApp(ctk.CTk):
         self.controller.set_one_drag_two(val)
         self._log(f"Dual Device Multipoint set to: {'ON' if val else 'OFF'}")
 
-    def _on_eq_preset_selected(self, preset_name: str):
+    def _build_preset_buttons(self):
+        for widget in self.preset_frame.winfo_children():
+            widget.destroy()
+        self.preset_buttons.clear()
+
+        all_presets = list(protocol.EQ_PRESETS.keys()) + list(config.get_custom_presets().keys())
+        active_preset = self.var_eq_preset.get()
+
+        cols = 4
+        for i, name in enumerate(all_presets):
+            row = i // cols
+            col = i % cols
+            is_active = (name == active_preset)
+            btn = ctk.CTkButton(
+                self.preset_frame,
+                text=name,
+                height=32,
+                corner_radius=6,
+                font=ctk.CTkFont(size=11, weight="bold" if is_active else "normal"),
+                fg_color="#0284c7" if is_active else "#1e293b",
+                hover_color="#0369a1" if is_active else "#334155",
+                text_color="#ffffff" if is_active else "#cbd5e1",
+                border_width=1 if is_active else 0,
+                border_color="#38bdf8",
+                command=lambda p=name: self._select_preset(p)
+            )
+            btn.grid(row=row, column=col, padx=3, pady=3, sticky="ew")
+            self.preset_frame.grid_columnconfigure(col, weight=1)
+            self.preset_buttons[name] = btn
+
+    def _select_preset(self, preset_name: str):
+        self.var_eq_preset.set(preset_name)
+        custom_presets = config.get_custom_presets()
+
         if preset_name in protocol.EQ_PRESETS:
             gains = protocol.EQ_PRESETS[preset_name]
-            for i in range(10):
-                self.eq_sliders[i].set(gains[i])
-                self.eq_labels[i].configure(text=f"{gains[i]:+d}dB")
-            self.controller.set_eq_preset(preset_name)
-            self._log(f"Loaded EQ Preset: {preset_name}")
+        elif preset_name in custom_presets:
+            gains = custom_presets[preset_name]
+        else:
+            gains = config.get_custom_eq()
+
+        for i in range(10):
+            self.eq_sliders[i].set(gains[i])
+            self.eq_labels[i].configure(text=f"{gains[i]:+d}dB")
+
+        self.controller.set_eq_preset(preset_name)
+        self._highlight_active_preset(preset_name)
+        self._update_delete_button_state(preset_name)
+        self._log(f"Loaded EQ Preset: {preset_name}")
+
+    def _highlight_active_preset(self, active_name: str):
+        for name, btn in self.preset_buttons.items():
+            is_active = (name == active_name)
+            btn.configure(
+                fg_color="#0284c7" if is_active else "#1e293b",
+                hover_color="#0369a1" if is_active else "#334155",
+                text_color="#ffffff" if is_active else "#cbd5e1",
+                font=ctk.CTkFont(size=11, weight="bold" if is_active else "normal"),
+                border_width=1 if is_active else 0,
+                border_color="#38bdf8"
+            )
+
+    def _update_delete_button_state(self, preset_name: str):
+        if preset_name in config.get_custom_presets():
+            self.btn_delete_preset.configure(state="normal", fg_color="#dc2626", hover_color="#b91c1c", text_color="#ffffff")
+        else:
+            self.btn_delete_preset.configure(state="disabled", fg_color="#27272a", text_color="#71717a")
 
     def _on_slider_moved(self, idx: int, value: float):
         int_val = int(round(value))
         self.eq_labels[idx].configure(text=f"{int_val:+d}dB")
         self.var_eq_preset.set("Custom")
-        self.cbox_presets.set("Custom")
+        self._highlight_active_preset("")
+        self._update_delete_button_state("Custom")
         self.controller.mark_user_action()
 
-    def _reset_eq(self):
-        self.var_eq_preset.set("OnePlus Buds 3")
-        self._on_eq_preset_selected("OnePlus Buds 3")
+    def _save_preset_prompt(self):
+        dialog = ctk.CTkInputDialog(
+            text="Enter a name for your custom EQ preset:",
+            title="Save Custom EQ Preset"
+        )
+        name = dialog.get_input()
+        if name and name.strip():
+            clean_name = name.strip()
+            if clean_name in protocol.EQ_PRESETS:
+                self._log(f"Cannot overwrite built-in preset '{clean_name}'. App-provided presets cannot be changed.")
+                return
+            gains = [int(round(s.get())) for s in self.eq_sliders]
+            config.save_custom_preset(clean_name, gains)
+            self._build_preset_buttons()
+            self._select_preset(clean_name)
+            self._log(f"Saved custom preset: '{clean_name}'")
+
+    def _delete_current_preset_prompt(self):
+        target = self.var_eq_preset.get()
+        if target in config.get_custom_presets():
+            ConfirmDialog(
+                self,
+                title="Delete Preset",
+                message=f"Are you sure you want to permanently delete custom preset '{target}'?",
+                on_confirm=lambda: self._execute_delete_preset(target),
+                confirm_text="Delete"
+            )
+
+    def _execute_delete_preset(self, name: str):
+        config.delete_custom_preset(name)
+        self._build_preset_buttons()
+        default_preset = config.get_default_preset()
+        self._select_preset(default_preset)
+        self._log(f"Deleted custom preset: '{name}'")
+
+    def _set_current_as_default(self):
+        current = self.var_eq_preset.get()
+        if current == "Custom":
+            gains = [int(round(s.get())) for s in self.eq_sliders]
+            config.set_custom_eq(gains)
+        config.set_default_preset(current)
+        if hasattr(self, "lbl_default_indicator"):
+            self.lbl_default_indicator.configure(text=f"(Default: {current})")
+        self._log(f"Default EQ on connect set to: {current}")
 
     def _apply_current_eq(self):
         gains = [int(round(s.get())) for s in self.eq_sliders]
+        config.set_custom_eq(gains)
         self.controller.set_custom_eq(gains)
-        self._log(f"Applied Custom EQ: {gains}")
+        self._log(f"Applied EQ curve: {gains}")
 
     def _log(self, text: str):
         self.lbl_log.configure(text=text)
@@ -539,18 +710,14 @@ class SilencioApp(ctk.CTk):
                 fg_color="#064e3b"
             )
             self.btn_connect.configure(text="Disconnect", fg_color="#dc2626", hover_color="#b91c1c")
-            self._log(f"Connected: {message} ● Automatically applied OnePlus Buds 3 EQ!")
-            self.var_eq_preset.set("OnePlus Buds 3")
-            self.cbox_presets.set("OnePlus Buds 3")
-            oneplus_gains = protocol.EQ_PRESETS.get("OnePlus Buds 3", [3, 4, 3, 2, 1, 0, -1, -3, -3, -2])
-            for i in range(10):
-                self.eq_sliders[i].set(oneplus_gains[i])
-                self.eq_labels[i].configure(text=f"{oneplus_gains[i]:+d}dB")
+            def_preset = config.get_default_preset()
+            self._log(f"Connected: {message} ● Automatically applied {def_preset} EQ!")
+            self._select_preset(def_preset)
             if self.tray_icon:
                 try:
                     self.tray_icon.notify(
-                        "Connected to Bluetooth! Automatically applied OnePlus Buds 3 EQ.",
-                        "🎧 ZEB-Silencio 200T"
+                        f"Connected to Bluetooth! Automatically applied {def_preset} EQ.",
+                        "ZEB-Silencio 200T"
                     )
                 except Exception:
                     pass
@@ -567,7 +734,7 @@ class SilencioApp(ctk.CTk):
         if key == "battery":
             pct = value.get("battery", 0)
             is_chg = value.get("is_charging", False)
-            chg_icon = " ⚡" if is_chg else ""
+            chg_icon = " (Charging)" if is_chg else ""
             self.lbl_battery.configure(text=f"{pct}%{chg_icon}")
             self.progress_battery.set(pct / 100.0)
             if pct <= 20:
@@ -594,8 +761,17 @@ class SilencioApp(ctk.CTk):
         elif key == "eq":
             gains = value.get("gains", [0]*10)
             name = value.get("name", "Custom")
+
+            # Keep continuous state if gains match the currently selected preset
+            cur_preset = self.var_eq_preset.get()
+            custom_presets = config.get_custom_presets()
+            expected_gains = protocol.EQ_PRESETS.get(cur_preset) or custom_presets.get(cur_preset)
+            if expected_gains and expected_gains == gains:
+                name = cur_preset
+
             self.var_eq_preset.set(name)
-            self.cbox_presets.set(name)
+            self._highlight_active_preset(name)
+            self._update_delete_button_state(name)
             for i in range(min(10, len(gains))):
                 self.eq_sliders[i].set(gains[i])
                 self.eq_labels[i].configure(text=f"{gains[i]:+d}dB")
@@ -613,19 +789,21 @@ class SilencioApp(ctk.CTk):
                 pil_img = Image.open(ico_path)
 
             menu = pystray.Menu(
-                pystray.MenuItem("🎧 Open Control Center", self._show_window_from_tray, default=True),
+                pystray.MenuItem("Open Control Center", self._show_window_from_tray, default=True),
                 pystray.Menu.SEPARATOR,
-                pystray.MenuItem("⚡ Apply OnePlus Buds 3 Now", lambda icon, item: self._apply_preset_from_tray("OnePlus Buds 3")),
-                pystray.MenuItem("🍎 Apply AirPods Preset", lambda icon, item: self._apply_preset_from_tray("AirPods")),
-                pystray.MenuItem("🎵 Apply Flat / Default", lambda icon, item: self._apply_preset_from_tray("Default / Flat")),
+
+                pystray.MenuItem("Apply OnePlus Buds 3", lambda icon, item: self._apply_preset_from_tray("OnePlus Buds 3")),
+                pystray.MenuItem("Apply AirPods Preset", lambda icon, item: self._apply_preset_from_tray("AirPods")),
+                pystray.MenuItem("Apply Stored Custom EQ", lambda icon, item: self._apply_preset_from_tray("Custom")),
+                pystray.MenuItem("Apply Flat / Default", lambda icon, item: self._apply_preset_from_tray("Default / Flat")),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(
-                    "🚀 Start with Windows", 
+                    "Start with Windows", 
                     self._toggle_startup_from_tray, 
                     checked=lambda item: is_windows_startup_enabled()
                 ),
                 pystray.Menu.SEPARATOR,
-                pystray.MenuItem("❌ Exit Completely", self._quit_app)
+                pystray.MenuItem("Exit", self._quit_app)
             )
 
             self.tray_icon = pystray.Icon("ZEB-Silencio-200T", pil_img, "ZEB-Silencio 200T Controller", menu)
@@ -662,11 +840,9 @@ class SilencioApp(ctk.CTk):
                 pass
         self.after(0, self.destroy)
 
-
 def main():
     app = SilencioApp()
     app.mainloop()
-
 
 if __name__ == "__main__":
     main()

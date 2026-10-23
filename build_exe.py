@@ -27,6 +27,7 @@ def build():
         "--hidden-import=pystray._win32",
         "--hidden-import=win32com",
         "--hidden-import=win32com.client",
+        "--hidden-import=app.config",
         "--clean",
         "run_app.py"
     ]
