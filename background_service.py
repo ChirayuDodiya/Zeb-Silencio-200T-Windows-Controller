@@ -1,7 +1,7 @@
 """
 ZEB-Silencio 200T - Headless Background Auto-Tuner Service
 Runs silently in the background, continuously watching for Bluetooth connection.
-Immediately upon connection, automatically flashes the 'OnePlus Buds 3' EQ curve to the headphones.
+Immediately upon connection, automatically flashes the configured default EQ curve to the headphones.
 """
 
 import os
@@ -73,7 +73,7 @@ def main():
     while running:
         try:
             target_mac = config.get_mac_address()
-            ctrl.target_mac = target_mac
+            ctrl.mac = target_mac
             port = find_silencio_com_port(target_mac) or "COM5"
             if not ctrl.is_connected:
                 success = ctrl.connect(port, sync=True)

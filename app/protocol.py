@@ -177,16 +177,14 @@ def build_packet(cmd: int, payload: bytes = b"", cmd_type: int = COMMAND_TYPE_RE
 def build_device_info_query() -> bytes:
     """
     Creates a compact DeviceInfo query fitting inside Bluetrum 15-byte MTU:
-    Power (1), ANC Mode (12), Work Mode (8), EQ Setting (4), Warning Tone (28), OneDragTwo (25).
-    Payload length is 6 * 2 = 12 bytes.
+    Power (1), ANC Mode (12), Work Mode (8), EQ Setting (4).
+    Payload length is 4 * 2 = 8 bytes.
     """
     tags_to_request = [
         INFO_DEVICE_POWER,
         INFO_ANC_MODE,
         INFO_WORK_MODE,
         INFO_EQ_SETTING,
-        INFO_WARNING_TONE,
-        INFO_ONE_DRAG_TWO,
     ]
     payload = bytearray()
     for tag in tags_to_request:
@@ -203,16 +201,6 @@ def build_anc_request(mode: int) -> bytes:
 def build_work_mode_request(mode: int) -> bytes:
     """0 = NORMAL, 1 = GAMING (Low Latency)"""
     return bytes([mode & 0xFF])
-
-
-def build_warning_tone_request(mode: int) -> bytes:
-    """0 = OFF, 1 = ON"""
-    return bytes([mode & 0xFF])
-
-
-def build_one_drag_two_request(mode: int) -> bytes:
-    """[1, 1, mode] where mode is 0 = OFF, 1 = ON"""
-    return bytes([1, 1, mode & 0xFF])
 
 
 def build_eq_request(preset_id: int, gains: List[int], is_custom: bool = False) -> bytes:
