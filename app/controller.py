@@ -25,8 +25,6 @@ class HeadphoneController:
         self.is_charging = False
         self.anc_mode = protocol.ANC_MODE_OFF # 0=OFF, 1=ON, 2=TRANSPARENCY
         self.work_mode = protocol.WORK_MODE_NORMAL # 0=NORMAL, 1=GAMING
-        self.warning_tone = protocol.WARNING_TONE_ON # 0=OFF, 1=ON
-        self.one_drag_two = protocol.ONE_DRAG_TWO_OFF # 0=OFF, 1=ON
         def_preset = config.get_default_preset()
         self.current_eq_name = def_preset
         if def_preset == "Custom":
@@ -229,26 +227,6 @@ class HeadphoneController:
             self.conn.send_command(protocol.COMMAND_WORK_MODE, payload)
             self._notify_state("work_mode", mode)
 
-    def set_warning_tone(self, enabled: bool):
-        """Enable or disable voice prompt tones."""
-        with self._query_lock:
-            self.mark_user_action()
-            val = protocol.WARNING_TONE_ON if enabled else protocol.WARNING_TONE_OFF
-            self.warning_tone = val
-            payload = protocol.build_warning_tone_request(val)
-            self.conn.send_command(protocol.COMMAND_WARNING_TONE, payload)
-            self._notify_state("warning_tone", val)
-
-    def set_one_drag_two(self, enabled: bool):
-        """Enable or disable dual device pairing (multipoint)."""
-        with self._query_lock:
-            self.mark_user_action()
-            val = protocol.ONE_DRAG_TWO_ON if enabled else protocol.ONE_DRAG_TWO_OFF
-            self.one_drag_two = val
-            payload = protocol.build_one_drag_two_request(val)
-            self.conn.send_command(protocol.COMMAND_ONE_DRAG_TWO, payload)
-            self._notify_state("one_drag_two", val)
-
     def set_eq_preset(self, preset_name: str):
         """Applies a built-in or user custom EQ preset."""
         custom_presets = config.get_custom_presets()
@@ -352,14 +330,7 @@ class HeadphoneController:
                     self.work_mode = payload[0]
                     self._notify_state("work_mode", self.work_mode)
 
-        # 5. Warning Tone (only notifications, ignore 1-byte command ACK)
-        elif cmd in (protocol.COMMAND_WARNING_TONE, protocol.INFO_WARNING_TONE):
-            if cmd_type == protocol.COMMAND_TYPE_NOTIFY and len(payload) >= 1:
-                if self.warning_tone != payload[0]:
-                    self.warning_tone = payload[0]
-                    self._notify_state("warning_tone", self.warning_tone)
-
-        # 6. Battery Power
+        # 5. Battery Power
         elif cmd == protocol.INFO_DEVICE_POWER:
             bat_info = protocol.parse_battery_info(payload)
             self.battery = bat_info["battery"]
@@ -389,14 +360,6 @@ class HeadphoneController:
                 if changed:
                     print(f"[Controller] Work mode updated: {self.work_mode}")
                 self._notify_state("work_mode", self.work_mode)
-        elif tag == protocol.INFO_WARNING_TONE:
-            if len(val) >= 1 and self.warning_tone != val[0]:
-                self.warning_tone = val[0]
-                self._notify_state("warning_tone", self.warning_tone)
-        elif tag == protocol.INFO_ONE_DRAG_TWO:
-            if len(val) >= 1 and self.one_drag_two != val[-1]:
-                self.one_drag_two = val[-1]
-                self._notify_state("one_drag_two", self.one_drag_two)
         elif tag == protocol.INFO_EQ_SETTING:
             eq_data = protocol.parse_eq_info(val)
             self._update_eq_state(eq_data)

@@ -135,8 +135,6 @@ class SilencioApp(ctk.CTk):
         # UI State Variables
         self.var_anc = ctk.StringVar(value="ANC OFF")
         self.var_game_mode = ctk.BooleanVar(value=False)
-        self.var_warning_tone = ctk.BooleanVar(value=True)
-        self.var_one_drag_two = ctk.BooleanVar(value=False)
         self.var_eq_preset = ctk.StringVar(value=config.get_default_preset())
         self.eq_sliders: List[ctk.CTkSlider] = []
         self.eq_labels: List[ctk.CTkLabel] = []
@@ -317,24 +315,10 @@ class SilencioApp(ctk.CTk):
 
         # Switch 1: Gaming Mode
         f1 = ctk.CTkFrame(features_card, fg_color="transparent")
-        f1.pack(fill="x", padx=15, pady=6)
+        f1.pack(fill="x", padx=15, pady=(6, 15))
         ctk.CTkLabel(f1, text="Low Latency Gaming Mode", font=ctk.CTkFont(size=13)).pack(side="left")
         self.sw_game = ctk.CTkSwitch(f1, text="", variable=self.var_game_mode, command=self._on_game_mode_toggle)
         self.sw_game.pack(side="right")
-
-        # Switch 2: Voice Prompt
-        f2 = ctk.CTkFrame(features_card, fg_color="transparent")
-        f2.pack(fill="x", padx=15, pady=6)
-        ctk.CTkLabel(f2, text="Voice Prompt / Tone", font=ctk.CTkFont(size=13)).pack(side="left")
-        self.sw_tone = ctk.CTkSwitch(f2, text="", variable=self.var_warning_tone, command=self._on_warning_tone_toggle)
-        self.sw_tone.pack(side="right")
-
-        # Switch 3: Dual Connection
-        f3 = ctk.CTkFrame(features_card, fg_color="transparent")
-        f3.pack(fill="x", padx=15, pady=(6, 15))
-        ctk.CTkLabel(f3, text="Dual Device Multipoint", font=ctk.CTkFont(size=13)).pack(side="left")
-        self.sw_dual = ctk.CTkSwitch(f3, text="", variable=self.var_one_drag_two, command=self._on_one_drag_two_toggle)
-        self.sw_dual.pack(side="right")
 
         # --- NOISE CANCELLATION (ANC) CARD (Right) ---
         anc_card = ctk.CTkFrame(right_col, corner_radius=12, fg_color="#1e293b")
@@ -555,16 +539,6 @@ class SilencioApp(ctk.CTk):
         self.controller.set_work_mode(mode)
         self._log(f"Gaming Mode set to: {'ON' if val else 'OFF'}")
 
-    def _on_warning_tone_toggle(self):
-        val = self.var_warning_tone.get()
-        self.controller.set_warning_tone(val)
-        self._log(f"Voice Prompts set to: {'ON' if val else 'OFF'}")
-
-    def _on_one_drag_two_toggle(self):
-        val = self.var_one_drag_two.get()
-        self.controller.set_one_drag_two(val)
-        self._log(f"Dual Device Multipoint set to: {'ON' if val else 'OFF'}")
-
     def _build_preset_buttons(self):
         for widget in self.preset_frame.winfo_children():
             widget.destroy()
@@ -752,10 +726,6 @@ class SilencioApp(ctk.CTk):
             self.lbl_anc_status.configure(text=disp_val)
         elif key == "work_mode":
             self.var_game_mode.set(value == protocol.WORK_MODE_GAMING)
-        elif key == "warning_tone":
-            self.var_warning_tone.set(value == protocol.WARNING_TONE_ON)
-        elif key == "one_drag_two":
-            self.var_one_drag_two.set(value == protocol.ONE_DRAG_TWO_ON)
         elif key == "device_name":
             self.lbl_dev_name.configure(text=value)
         elif key == "eq":

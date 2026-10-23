@@ -4,7 +4,6 @@ Quick control via terminal or keyboard shortcuts:
   python cli.py status
   python cli.py anc [on|off|trans]
   python cli.py game [on|off]
-  python cli.py tone [on|off]
   python cli.py eq [preset_name]
 """
 
@@ -29,10 +28,6 @@ def main():
     # Game Mode
     game_p = subparsers.add_parser("game", help="Set Gaming / Low Latency mode")
     game_p.add_argument("state", choices=["on", "off"], help="Gaming mode (on, off)")
-
-    # Voice Prompts
-    tone_p = subparsers.add_parser("tone", help="Enable or disable voice prompt tones")
-    tone_p.add_argument("state", choices=["on", "off"], help="Voice prompt state (on, off)")
 
     # EQ
     eq_p = subparsers.add_parser("eq", help="Apply EQ preset")
@@ -61,8 +56,6 @@ def main():
         anc_names = {0: "OFF", 1: "ON (Cancelling)", 2: "Transparency / Ambient"}
         print(f"ANC Mode: {anc_names.get(ctrl.anc_mode, 'Unknown')}")
         print(f"Gaming Mode: {'ON' if ctrl.work_mode == 1 else 'OFF'}")
-        print(f"Voice Prompts: {'ON' if ctrl.warning_tone == 1 else 'OFF'}")
-        print(f"Dual Device (Multipoint): {'ON' if ctrl.one_drag_two == 1 else 'OFF'}")
         print(f"EQ Preset: {ctrl.current_eq_name} - Gains: {ctrl.eq_gains}")
 
     elif args.command == "anc":
@@ -75,12 +68,6 @@ def main():
         val = 1 if args.state == "on" else 0
         ctrl.set_work_mode(val)
         print(f"Gaming mode set to: {args.state.upper()}")
-        time.sleep(0.3)
-
-    elif args.command == "tone":
-        val = (args.state == "on")
-        ctrl.set_warning_tone(val)
-        print(f"Voice prompts set to: {args.state.upper()}")
         time.sleep(0.3)
 
     elif args.command == "eq":
